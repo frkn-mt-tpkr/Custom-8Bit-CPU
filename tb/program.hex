@@ -1,0 +1,6 @@
+24  // Address 0x0: LDA 0x4  (Load from address 4)
+15  // Address 0x1: ADD 0x5  (Add from address 5)
+E0  // Address 0x2: OUT      (Output result)
+F0  // Address 0x3: HLT      (Halt processor)
+0D  // Address 0x4: First Number  (Decimal 13)
+07  // Address 0x5: Second Number (Decimal 7)
