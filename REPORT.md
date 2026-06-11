@@ -290,8 +290,7 @@ The ALU uses a **ripple-carry** architecture where the carry must propagate thro
 | 4 | No flags register | High | Add Zero, Carry, Overflow flags from ALU output |
 | 5 | T6–T7 wasted cycles | Low | Optimize to variable-length micro-steps |
 | 6 | No gate delay modeling | Low | Add `#delay` annotations for timing-accurate simulation |
-| 7 | Single test program | Low | Create additional test cases for edge cases |
-| 8 | No STA (store) instruction | Medium | Add write-back path from A to RAM |
+| 7 | No STA (store) instruction | Medium | Add write-back path from A to RAM |
 
 ---
 
