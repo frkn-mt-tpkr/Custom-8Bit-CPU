@@ -1084,6 +1084,7 @@ This is a **simulation-only** backdoor technique. In real hardware (or in Logisi
 | | |
 |---|---|
 | **Email** | furkan64umuttopkir@gmail.com |
+| **GitHub** | [frkn-mt-tpkr](https://github.com/frkn-mt-tpkr) |
 
 ---
 
