@@ -137,7 +137,7 @@ module cpu_top_sap1 (
         .RI(active_ri),
         .RO(ro), 
         .CLK(MAIN_CLK),
-        .RESET(MAIN_RESET),
+        .RESET(1'b0),
         .DATA_IN(mbr_monitor),
         .DATA_OUT(main_bus)
     );

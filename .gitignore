@@ -1,0 +1,9 @@
+# Simulation waveforms
+*.vcd
+
+# Compiled Icarus Verilog binaries
+cpu_test
+cpu_prog_test
+reg_test
+sram_test
+ram_test

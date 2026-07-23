@@ -88,9 +88,16 @@ Custom_8Bit_CPU_Project/
 │   ├── register_unit_8b.v            #   8-bit Register with tri-state output
 │   └── adder_1b.v                    #   1-bit Full Adder (gate-level)
 │
-├── tb/                               # Testbench and test data
-│   ├── cpu_tb.v                      #   CPU simulation testbench
-│   └── program.hex                   #   Sample program (HEX format)
+├── asm/                              # Assembler toolchain
+│   ├── assembler.py                  #   Assembles .asm source into hex
+│   ├── program.asm                   #   Sample program (assembly source)
+│   └── program.hex                   #   Assembled machine code
+│
+├── tb/                               # Testbenches
+│   ├── cpu_prog_tb.v                 #   CPU integration test (PROG_MODE + self-check)
+│   ├── register_unit_tb.v            #   Register unit test
+│   ├── sram_4byte_tb.v               #   4-byte SRAM test
+│   └── ram_16byte_tb.v               #   16-byte RAM test
 │
 ├── circuits/                         # Logisim Evolution circuit files
 │   ├── Top_Module.circ              #   Complete CPU schematic
@@ -440,7 +447,7 @@ The CPU operates in two phases: first you **program the RAM** (bootloader), then
 ### Phase 1: System Reset
 
 1. Set the **`PROG_MODE`** switch to `1` (this puts the CPU to sleep — the Control Unit's clock is disabled)
-2. Press the **`MAIN_RESET`** button once and release (all registers, PC, and the step counter are cleared to zero)
+2. Press the **`MAIN_RESET`** button once and release (the CPU registers, PC, and the step counter are cleared to zero — RAM is not tied to reset, so it is unaffected)
 
 ### Phase 2: Programming the RAM (Bootloader)
 
@@ -521,7 +528,7 @@ We will load the following program into RAM:
 
 1. Set the manual data input pins to **`0x00`** (clear the bus — hand it back to the CPU)
 2. Set **`PROG_MODE`** to `0` (control is now transferred to the CPU)
-3. Press **`MAIN_RESET`** once and release (PC and step counter are reset to 0, ready for T0)
+3. Press **`MAIN_RESET`** once and release (PC and step counter are reset to 0, ready for T0; the program you just loaded stays in RAM, which is not tied to reset)
 4. Start the automatic clock from the Logisim menu: **Simulate → Tick Enabled** (or press **Ctrl+K**)
 
 The CPU will now execute the program automatically:
@@ -535,7 +542,7 @@ The hexadecimal display in Logisim will show **`14`** (which is 20 in decimal). 
 
 ## 📝 Understanding `program.hex` — The Machine Code File
 
-The `program.hex` file contains the machine code that gets loaded into RAM during Verilog simulation. It is a plain text file where each line represents **one byte in hexadecimal**.
+The `program.hex` file (in `asm/`) holds the machine code that gets loaded into RAM during Verilog simulation. It is produced by the assembler from `program.asm`, and is a plain text file where each line represents **one byte in hexadecimal**.
 
 ### Current Contents
 
@@ -640,6 +647,50 @@ Currently, subtraction is only available via the `MANUAL_Sub` pin. To use it as 
 > - Decimal `25` → Hex `19`
 > - Decimal `100` → Hex `64`
 > - Decimal `255` → Hex `FF` (maximum value for 8 bits)
+
+---
+
+## 🛠️ Assembler
+
+Instead of hand-encoding each instruction, a small Python assembler
+(`asm/assembler.py`) translates human-readable assembly into the `program.hex`
+machine code. The instruction set is tiny, so the whole assembler is about a
+hundred lines.
+
+### Assembly Syntax
+
+| Form | Meaning |
+|---|---|
+| `LDA n` / `ADD n` | Instruction with a 4-bit address operand |
+| `OUT` / `HLT` | Instruction with no operand |
+| `DB n` | Define a raw data byte (decimal, `0x..`, or `0b..`) |
+| `; ...` | Comment (ignored) |
+
+Each instruction is encoded as `[OPCODE : 4 bits][ADDRESS : 4 bits]`. For
+example, `LDA 4` assembles to `(0x2 << 4) | 0x4` = `0x24`.
+
+### Example Program
+
+`asm/program.asm` — compute 13 + 7:
+
+```asm
+LDA 4      ; A <- RAM[4]
+ADD 5      ; A <- A + RAM[5]
+OUT        ; OUT_PORT <- A
+HLT        ; stop
+DB 13      ; address 4: first number
+DB 7       ; address 5: second number
+```
+
+### Usage
+
+```bash
+python asm/assembler.py asm/program.asm asm/program.hex
+```
+
+Unknown mnemonics are reported with a `file:line` message and a non-zero exit
+code. The generated `asm/program.hex` is what the testbench loads, so the full
+flow is: edit `program.asm` → run the assembler → run the simulation.
 
 ---
 
@@ -995,7 +1046,7 @@ Result: RAM[0x05] = Bank 1, Register 1
 
 ```bash
 # Compile all modules and testbench
-iverilog -o cpu_test \
+iverilog -o cpu_prog_test \
     rtl/adder_1b.v \
     rtl/register_unit_8b.v \
     rtl/alu_8b_add_sub.v \
@@ -1004,55 +1055,66 @@ iverilog -o cpu_test \
     rtl/ram_16byte.v \
     rtl/control_unit_sap1_custom.v \
     rtl/cpu_top_sap1.v \
-    tb/cpu_tb.v
+    tb/cpu_prog_tb.v
 
-# Run simulation (generates dump.vcd)
-vvp cpu_test
+# Run simulation (generates cpu_prog_dump.vcd)
+vvp cpu_prog_test
 
 # View waveforms
-gtkwave dump.vcd
+gtkwave cpu_prog_dump.vcd
 ```
 
 ### How the Testbench Works
 
-The testbench (`tb/cpu_tb.v`) takes a shortcut compared to the manual Logisim process — instead of using the Programming Mode pins, it directly writes into the RAM register cells using Verilog hierarchical references:
+The testbench (`tb/cpu_prog_tb.v`) reads the assembled program from `asm/program.hex` with `$readmemh`, then programs the CPU exactly the way you would in Logisim — through the Programming Mode interface, not a backdoor. A `prog_write_byte` task drives the manual pins to write each byte in three pulses (address → MAR, data → MBR, MBR → RAM):
 
 ```verilog
-// Loads program.hex into a temporary array
-$readmemh("tb/program.hex", program_data);
-
-// Directly writes into the internal flip-flops of each RAM cell
-uut.ram.bank_0.reg_0.q_out = program_data[0];   // Address 0x0
-uut.ram.bank_0.reg_1.q_out = program_data[1];   // Address 0x1
-uut.ram.bank_0.reg_2.q_out = program_data[2];   // Address 0x2
-uut.ram.bank_0.reg_3.q_out = program_data[3];   // Address 0x3
-uut.ram.bank_1.reg_0.q_out = program_data[4];   // Address 0x4
-...
+task prog_write_byte(input [3:0] addr, input [7:0] data);
+    // 1) address -> MAR   (MANUAL_LM)
+    // 2) data    -> MBR   (MANUAL_L_MBR)
+    // 3) MBR     -> RAM   (MANUAL_RI)
 ```
 
-This is a **simulation-only** backdoor technique. In real hardware (or in Logisim), you must use the Programming Mode interface described above.
+After loading the program, it releases the bus, switches to Execution Mode, runs the CPU, and self-checks the result:
+
+```verilog
+if (OUT_PORT !== 8'h14)
+    $display("FAIL: OUT_PORT=0x%02H, expected 0x14", OUT_PORT);
+else
+    $display("PASS: OUT_PORT=0x%02H", OUT_PORT);
+```
+
+This exercises the same Programming Mode interface you use in Logisim, so the simulation tests the real design path rather than a shortcut.
 
 ---
 
 ## 📊 Simulation Waveform
 
-### ADD Operation — Computing 13 + 7 = 20
+### Loading and Executing 13 + 7 = 20
 
-![Waveform: ADD 0x0D + 0x07](docs/waveforms/waveform_add_0D_07.png)
+![Waveform: programming and executing 0x0D + 0x07](docs/waveforms/waveform_add_0D_07.png)
 
-**What to look for in the waveform:**
+The trace covers both phases: first the program is loaded through the manual
+interface, then the CPU executes it.
+
+**Programming phase (left):**
+
+| Signal | What it shows |
+|---|---|
+| `PROG_MODE` | Held at 1 while loading, drops to 0 for execution |
+| `MANUEL_DATA` | Address and data bytes driven onto the bus, one per pulse |
+| `MANUAL_LM` / `MANUAL_L_MBR` / `MANUAL_RI` | The three write pulses per byte: address → MAR, data → MBR, MBR → RAM |
+| `mar_monitor` / `mbr_monitor` | Target address and staged data byte for each RAM write |
+
+**Execution phase (right):**
 
 | Signal | Expected Behavior |
 |---|---|
-| `step_counter` | Cycles: 0→1→2→3→4→5 for ADD instruction |
-| `pc_monitor` | Increments: 0→1→2→3 then stops |
-| `ir_monitor` | Shows `0x24` (LDA), then `0x15` (ADD), then `0xE0` (OUT), then `0xF0` (HLT) |
+| `ir_monitor` | `0x24` (LDA), then `0x15` (ADD), then `0xE0` (OUT), then `0xF0` (HLT) |
 | `a_monitor` | 0 → 13 (after LDA) → 20 (after ADD) |
-| `b_monitor` | 0 → 7 (loaded during ADD T4) |
-| `mar_monitor` | Shows addresses as they are loaded: 0,4,1,5,2,... |
-| `out_reg_monitor` | 0 → 20 (after OUT executes) = `0x14` hex |
-| `main_bus` | Changes each T-step as different drivers activate |
-| `halted` | 0 → 1 (when HLT is reached at T3) |
+| `b_monitor` | 0 → 7 (loaded during ADD) |
+| `main_bus` | Changes each step as different drivers activate |
+| `OUT_PORT` | 0 → 20 = `0x14` (after OUT) |
 
 ---
 
