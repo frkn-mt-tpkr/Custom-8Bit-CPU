@@ -17,7 +17,6 @@ module cpu_prog_tb;
     reg        MANUAL_LM;
     reg        MANUAL_L_MBR;
     reg        MANUAL_RI;
-    reg        MANUAL_Sub;
     reg        MANUAL_B_OUT;
 
     wire [7:0] OUT_PORT;
@@ -35,7 +34,6 @@ module cpu_prog_tb;
         .MANUAL_LM(MANUAL_LM),
         .MANUAL_L_MBR(MANUAL_L_MBR),
         .MANUAL_RI(MANUAL_RI),
-        .MANUAL_Sub(MANUAL_Sub),
         .MANUAL_B_OUT(MANUAL_B_OUT),
         .OUT_PORT(OUT_PORT)
     );
@@ -88,7 +86,6 @@ module cpu_prog_tb;
         MANUAL_LM      = 0;
         MANUAL_L_MBR   = 0;
         MANUAL_RI      = 0;
-        MANUAL_Sub     = 0;
         MANUAL_B_OUT   = 0;
 
         // System reset

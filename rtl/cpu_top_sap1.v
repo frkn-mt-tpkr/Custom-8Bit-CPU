@@ -14,7 +14,6 @@ module cpu_top_sap1 (
     input  wire       MANUAL_LM,
     input  wire       MANUAL_L_MBR,
     input  wire       MANUAL_RI,
-    input  wire       MANUAL_Sub,
     input  wire       MANUAL_B_OUT,
     
     // Output
@@ -27,7 +26,7 @@ module cpu_top_sap1 (
     wire cu_clk = MAIN_CLK & ~PROG_MODE;
 
     wire cu_pc_out, cu_pc_inc, cu_li, cu_lm, cu_ei, cu_l_mbr;
-    wire cu_ri, cu_ro, cu_la, cu_lb, cu_alu_out, cu_lo, cu_a_out;
+    wire cu_ri, cu_ro, cu_la, cu_lb, cu_alu_out, cu_lo, cu_a_out, cu_sub;
 
     control_unit_sap1_custom control_unit (
         .CLK(cu_clk),
@@ -45,7 +44,8 @@ module cpu_top_sap1 (
         .LB(cu_lb),
         .ALU_OUT(cu_alu_out),
         .LO(cu_lo),
-        .A_OUT(cu_a_out)
+        .A_OUT(cu_a_out),
+        .SUB(cu_sub)
     );
 
     // Prevent CU from occupying the Bus when PROG_MODE is 1
@@ -106,7 +106,7 @@ module cpu_top_sap1 (
     alu_8b_add_sub alu (
         .A(a_monitor),
         .B(b_monitor),
-        .Subtraction(MANUAL_Sub),
+        .Subtraction(cu_sub),
         .res(alu_res),
         .Overflow()
     );

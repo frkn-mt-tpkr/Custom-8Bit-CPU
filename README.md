@@ -215,10 +215,11 @@ Binary:   1110     0000           1111     0000
 |:---:|:---:|:---:|:---:|---|:---:|
 | `0001` | `1x` | **ADD** | `0001_AAAA` | `A ← A + RAM[AAAA]` | 6 |
 | `0010` | `2x` | **LDA** | `0010_AAAA` | `A ← RAM[AAAA]` | 5 |
+| `0011` | `3x` | **SUB** | `0011_AAAA` | `A ← A − RAM[AAAA]` | 6 |
 | `1110` | `Ex` | **OUT** | `1110_xxxx` | `OUT_PORT ← A` | 4 |
 | `1111` | `Fx` | **HLT** | `1111_xxxx` | Halt (freeze step counter) | 4 |
 
-> **Note:** The ALU hardware supports subtraction via two's complement (the `MANUAL_Sub` pin), but a **SUB** opcode is not yet implemented in the Control Unit. There are also no jump or branch instructions — the PC can only increment sequentially.
+> **Note:** There are no jump or branch instructions yet — the PC can only increment sequentially.
 
 ---
 
@@ -244,6 +245,7 @@ After fetch, the behavior depends on the opcode stored in IR[7:4]:
 |:---:|---|---|---|
 | **LDA** | `EI, LM` → IR[3:0] → MAR | `RO, LA` → RAM[MAR] → A | — |
 | **ADD** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, LA` → A+B → A |
+| **SUB** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, SUB, LA` → A−B → A |
 | **OUT** | `LO, A_OUT` → A → Output Reg | — | — |
 | **HLT** | `halted ← 1` (counter frozen) | — | — |
 
@@ -281,6 +283,7 @@ Step counter advances on NEGEDGE → signals are ready BEFORE the next POSEDGE
 | `LA` | Load A | Bus → A | Latch bus value into Register A |
 | `LB` | Load B | Bus → B | Latch bus value into Register B |
 | `ALU_OUT` | ALU Output | ALU → Bus | Drive ALU result onto the bus |
+| `SUB` | ALU Subtract | → ALU | Put the ALU in subtract mode (asserted at a SUB instruction's T5) |
 | `A_OUT` | A Output | A → Bus | Drive Register A value onto the bus |
 | `LO` | Load Output | Bus → OUT | Latch bus value into Output Register |
 
@@ -638,9 +641,18 @@ F0        // HLT       — halt
 
 Expected result: `OUT_PORT = 0x3C` (60 in decimal)
 
-#### Example 3: Subtract two numbers (50 - 20) — requires adding SUB to Control Unit
+#### Example 3: Subtract two numbers (50 - 20)
 
-Currently, subtraction is only available via the `MANUAL_Sub` pin. To use it as an instruction, you would need to add a `SUB` opcode (e.g., `0011`) to the Control Unit's decode logic.
+```
+24        // LDA 0x4   — load 50 from address 4
+35        // SUB 0x5   — subtract 20 at address 5
+E0        // OUT       — output the result
+F0        // HLT       — halt
+32        // 0x32 = 50 decimal (first number)
+14        // 0x14 = 20 decimal (second number)
+```
+
+Expected result: `OUT_PORT = 0x1E` (30 in decimal). This program is in `asm/subtract.asm`.
 
 > **Tip:** When converting decimal to hex for the data bytes, remember:
 > - Decimal `13` → Hex `0D`
@@ -1009,7 +1021,7 @@ Result: RAM[0x05] = Bank 1, Register 1
 
 - **`Register B` (below A):** The second operand register. `MONITOR` feeds the ALU's B input. `LB` gates the clock. `B_OUT` is a manual control pin (not used by the CU).
 
-- **`ALU 1` (center):** Connected between Register A and Register B. The `Sub` manual switch controls addition vs. subtraction. Output goes through a **controlled buffer** gated by `ALU_OUT` to reach the bus.
+- **`ALU 1` (center):** Connected between Register A and Register B. The Control Unit's `SUB` signal selects addition vs. subtraction (asserted during a SUB instruction's T5). Output goes through a **controlled buffer** gated by `ALU_OUT` to reach the bus.
 
 - **`MAR` — Memory Address Register (center-right):** Captures addresses from the bus. Its `MONITOR` output connects directly to the RAM's `ADRES` input (not through the bus — this is a dedicated wire).
 
@@ -1122,7 +1134,7 @@ interface, then the CPU executes it.
 
 | Status | Feature | Description |
 |:---:|---|---|
-| ⬜ | **SUB instruction** | ALU already supports subtraction; add opcode `0011` to the Control Unit |
+| ✅ | **SUB instruction** | Opcode `0011`; reuses the ADD datapath with the ALU in subtract mode |
 | ⬜ | **JMP instruction** | Direct load into Program Counter (unconditional jump) |
 | ⬜ | **Conditional branching** (JZ, JC) | Requires adding a Flags Register (Zero, Carry, Overflow) |
 | ⬜ | **STA instruction** | Store accumulator value to a RAM address |

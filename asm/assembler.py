@@ -16,12 +16,13 @@ import sys
 OPCODES = {
     "LDA": 0x2,
     "ADD": 0x1,
+    "SUB": 0x3,
     "OUT": 0xE,
     "HLT": 0xF,
 }
 
 # Mnemonics that take an address operand; the rest ignore the lower nibble.
-NEEDS_OPERAND = {"LDA", "ADD"}
+NEEDS_OPERAND = {"LDA", "ADD", "SUB"}
 
 
 def assemble_line(line):

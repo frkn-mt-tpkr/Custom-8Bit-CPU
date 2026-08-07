@@ -4,7 +4,7 @@ module control_unit_sap1_custom (
     input  wire       CLK,
     input  wire       RESET,
     input  wire [3:0] OPCODE,
-    
+
     output wire PC_OUT,
     output wire PC_INC,
     output wire LI,
@@ -17,7 +17,8 @@ module control_unit_sap1_custom (
     output wire LB,
     output wire ALU_OUT,
     output wire LO,
-    output wire A_OUT
+    output wire A_OUT,
+    output wire SUB
 );
 
     // Ring Counter T0 - T7
@@ -43,43 +44,46 @@ module control_unit_sap1_custom (
     wire T4 =  step_counter[2] & ~step_counter[1] & ~step_counter[0];
     wire T5 =  step_counter[2] & ~step_counter[1] &  step_counter[0];
 
-  
-    wire ADD_ins = (OPCODE == 4'b0001); 
-    wire LDA_ins = (OPCODE == 4'b0010); 
-    wire OUT_ins = (OPCODE == 4'b1110); 
-    wire HLT_ins = (OPCODE == 4'b1111); 
-    
+    wire ADD_ins = (OPCODE == 4'b0001);
+    wire SUB_ins = (OPCODE == 4'b0011);
+    wire LDA_ins = (OPCODE == 4'b0010);
+    wire OUT_ins = (OPCODE == 4'b1110);
+    wire HLT_ins = (OPCODE == 4'b1111);
+
+    // ADD and SUB share the same datapath; only the ALU mode differs
+    wire ADD_SUB_ins = ADD_ins | SUB_ins;
+
     // Control Logic
-    
+
     assign PC_OUT  = T0;
     assign PC_INC  = T1;
     assign LI      = T2;
-    
-  
-    assign EI      = T3 & (ADD_ins | LDA_ins);
-    
+
+    assign EI      = T3 & (ADD_SUB_ins | LDA_ins);
+
     // L_MBR and RI are only needed during programming mode (MANUAL signals).
     // The control unit should NEVER assert them during normal execution.
     assign L_MBR   = 1'b0;
     assign RI      = 1'b0;
 
-   
-    assign LM      = T0 | (T3 & (ADD_ins | LDA_ins));
-    
+    assign LM      = T0 | (T3 & (ADD_SUB_ins | LDA_ins));
+
     // T3: OUT instruction
     assign LO      = T3 & OUT_ins;
     assign A_OUT   = LO;
 
-    // T4: ADD instruction
-    assign LB      = T4 & ADD_ins;
-    
-    // LA
-    assign LA      = (T4 & LDA_ins) | (T5 & ADD_ins);
+    // T4: ADD/SUB loads B
+    assign LB      = T4 & ADD_SUB_ins;
 
-    // RO: Active in T2 or T4 (ADD/LDA)
-    assign RO      = T2 | (T4 & (ADD_ins | LDA_ins));
-    
-    // T5: ADD instruction
-    assign ALU_OUT = T5 & ADD_ins;
+    assign LA      = (T4 & LDA_ins) | (T5 & ADD_SUB_ins);
+
+    // RO active in T2, or T4 for memory instructions
+    assign RO      = T2 | (T4 & (ADD_SUB_ins | LDA_ins));
+
+    // T5: ADD/SUB drives the ALU result onto the bus
+    assign ALU_OUT = T5 & ADD_SUB_ins;
+
+    // Put the ALU in subtract mode only during T5 of SUB
+    assign SUB     = T5 & SUB_ins;
 
 endmodule
