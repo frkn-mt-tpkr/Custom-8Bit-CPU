@@ -3,23 +3,29 @@
 module program_counter (
     input  wire       CLK,
     input  wire       PC_INC,
+    input  wire       PC_LOAD,
     input  wire       RESET,
     input  wire       PC_OUT,
+    input  wire [7:0] Data_In,
     output wire [7:0] Bus_Out
 );
 
     // Internal connections
-    wire       gated_clk;    
+    wire       gated_clk;
     wire [7:0] pc_monitor;   // Current PC
     wire [7:0] next_pc;      // PC + 1
+    wire [7:0] reg_input;    // Value latched into the register
     wire       overflow_nc;  // Overflow output
 
-    // Allows clock signal when PC_INC is 1
-    assign gated_clk = CLK & PC_INC;
+    // Allows clock signal when counting or loading
+    assign gated_clk = CLK & (PC_INC | PC_LOAD);
+
+    // Jump target on PC_LOAD, otherwise PC + 1
+    assign reg_input = PC_LOAD ? Data_In : next_pc;
 
     // 8-bit Register
     register_unit_8b reg_inst (
-        .Data_In(next_pc),
+        .Data_In(reg_input),
         .CLK(gated_clk),
         .RESET(RESET),
         .REG_OUT(PC_OUT),

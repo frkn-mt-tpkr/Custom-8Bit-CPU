@@ -72,6 +72,8 @@ This report documents the specifications, design constraints, resource utilizati
 |:---:|:---:|:---:|---|:---:|
 | `0x1_` | `0001` | **ADD** | `A ← A + RAM[addr]` | 6 |
 | `0x2_` | `0010` | **LDA** | `A ← RAM[addr]` | 5 |
+| `0x3_` | `0011` | **SUB** | `A ← A − RAM[addr]` | 6 |
+| `0x4_` | `0100` | **JMP** | `PC ← addr` | 4 |
 | `0xE_` | `1110` | **OUT** | `OUT_PORT ← A` | 4 |
 | `0xF_` | `1111` | **HLT** | Halt (freeze step counter) | 4 |
 
@@ -80,7 +82,7 @@ This report documents the specifications, design constraints, resource utilizati
 | Instruction encoding | Fixed-length, 8-bit |
 | Addressing modes | Direct only (4-bit absolute address) |
 | Max instructions in memory | 16 (limited by 4-bit address space) |
-| Branch/Jump support | Not implemented (PC increments only) |
+| Branch/Jump support | Unconditional JMP (direct PC load); no conditional branches |
 | Interrupt support | None |
 
 ---
@@ -95,7 +97,7 @@ This report documents the specifications, design constraints, resource utilizati
 | No pipeline | Single instruction processed at a time | CPI ranges from 4–6 depending on instruction |
 | Shared bus | All data transfers via single 8-bit tri-state bus | Only one bus driver active per clock cycle |
 | No flags register | ALU carry/overflow/zero flags not captured | Conditional branching impossible without hardware modification |
-| Sequential PC only | Program Counter can only increment by 1 | No loops, no jumps, no subroutines |
+| No stack or link register | PC can increment or be loaded by `JMP`, but return addresses are not saved | Loops are possible; subroutines (CALL/RET) are not |
 | Fixed control sequence | 8-step counter (T0–T7), wraps every 8 cycles | T6–T7 are no-ops (wasted cycles for 6-step instructions) |
 
 ### 3.2 Timing Constraints
@@ -170,6 +172,8 @@ This report documents the specifications, design constraints, resource utilizati
 |:---:|:---:|:---:|:---:|---|
 | **LDA** | 3 | 2 (T3, T4) | **5** | Load from RAM into accumulator |
 | **ADD** | 3 | 3 (T3, T4, T5) | **6** | Load from RAM into B, compute A+B, store to A |
+| **SUB** | 3 | 3 (T3, T4, T5) | **6** | Load from RAM into B, compute A−B, store to A |
+| **JMP** | 3 | 1 (T3) | **4** | Load the target address into the PC |
 | **OUT** | 3 | 1 (T3) | **4** | Copy accumulator to output register |
 | **HLT** | 3 | 1 (T3) | **4** | Set halted flag, freeze counter |
 
@@ -285,12 +289,26 @@ The ALU uses a **ripple-carry** architecture where the carry must propagate thro
 | # | Limitation | Severity | Workaround / Future Fix |
 |:---:|---|:---:|---|
 | 1 | Only 16 bytes of RAM | Medium | Expand to 8-bit address (256 bytes) |
-| 2 | No SUB instruction in CU | Low | ALU supports it; add opcode `0011` to CU |
-| 3 | No jump/branch instructions | High | Add JMP (direct PC load), JZ/JC (conditional) |
-| 4 | No flags register | High | Add Zero, Carry, Overflow flags from ALU output |
-| 5 | T6–T7 wasted cycles | Low | Optimize to variable-length micro-steps |
-| 6 | No gate delay modeling | Low | Add `#delay` annotations for timing-accurate simulation |
-| 7 | No STA (store) instruction | Medium | Add write-back path from A to RAM |
+| 2 | No conditional branches (JZ, JC) | High | Requires a flags register; JMP is implemented |
+| 3 | No flags register | High | Add Zero, Carry, Overflow flags from ALU output |
+| 4 | T6–T7 wasted cycles | Low | Optimize to variable-length micro-steps |
+| 5 | No gate delay modeling | Low | Add `#delay` annotations for timing-accurate simulation |
+| 6 | No STA (store) instruction | Medium | Add write-back path from A to RAM |
+| 7 | JMP also latches MAR | None | Accepted by design; see 7.1 |
+
+### 7.1 JMP Side Effect on MAR
+
+`LM` is derived as `T0 | EI` rather than from its own instruction decode. Because
+`EI` now includes JMP, a JMP's T3 latches the jump target into MAR as well as
+into the PC.
+
+This is harmless. MAR is only read when the RAM is accessed (`RO` or `RI`), and
+the next instruction's T0 overwrites MAR with the new PC before any such access
+occurs, so the stale value is never used — a "don't care" condition.
+
+Giving `LM` its own OR gate (`ADD | LDA | SUB`, without JMP) would remove the
+side effect at the cost of one extra gate. The current form was kept because the
+observable behaviour is identical and the gate count is lower.
 
 ---
 

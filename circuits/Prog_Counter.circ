@@ -5,7 +5,6 @@
   <lib desc="#Wiring" name="0">
     <tool name="Pin">
       <a name="appearance" val="classic"/>
-      <a name="facing" val="west"/>
     </tool>
   </lib>
   <lib desc="#Gates" name="1">
@@ -15,8 +14,11 @@
     <tool name="Buffer">
       <a name="facing" val="west"/>
     </tool>
+    <tool name="AND Gate">
+      <a name="facing" val="west"/>
+    </tool>
     <tool name="OR Gate">
-      <a name="facing" val="south"/>
+      <a name="facing" val="west"/>
     </tool>
     <tool name="Controlled Buffer">
       <a name="facing" val="west"/>
@@ -576,13 +578,15 @@
     <a name="circuit" val="Program_Counter"/>
     <a name="circuitnamedboxfixedsize" val="true"/>
     <a name="simulationFrequency" val="1.0"/>
-    <comp lib="0" loc="(110,140)" name="Pin">
+    <comp lib="0" loc="(1030,160)" name="Pin">
       <a name="appearance" val="classic"/>
-      <a name="label" val="CLK"/>
+      <a name="label" val="Data_In"/>
+      <a name="width" val="8"/>
     </comp>
-    <comp lib="0" loc="(110,180)" name="Pin">
+    <comp lib="0" loc="(1070,260)" name="Pin">
       <a name="appearance" val="classic"/>
-      <a name="label" val="PC_INC"/>
+      <a name="facing" val="north"/>
+      <a name="label" val="PC_LOAD"/>
     </comp>
     <comp lib="0" loc="(310,180)" name="Pin">
       <a name="appearance" val="classic"/>
@@ -606,7 +610,25 @@
     <comp lib="0" loc="(660,180)" name="Constant">
       <a name="width" val="8"/>
     </comp>
-    <comp lib="1" loc="(190,160)" name="AND Gate"/>
+    <comp lib="0" loc="(830,230)" name="Pin">
+      <a name="appearance" val="classic"/>
+      <a name="facing" val="west"/>
+      <a name="label" val="CLK"/>
+    </comp>
+    <comp lib="0" loc="(920,290)" name="Pin">
+      <a name="appearance" val="classic"/>
+      <a name="facing" val="west"/>
+      <a name="label" val="PC_INC"/>
+    </comp>
+    <comp lib="1" loc="(740,250)" name="AND Gate">
+      <a name="facing" val="west"/>
+    </comp>
+    <comp lib="1" loc="(830,270)" name="OR Gate">
+      <a name="facing" val="west"/>
+    </comp>
+    <comp lib="2" loc="(1090,150)" name="Multiplexer">
+      <a name="width" val="8"/>
+    </comp>
     <comp loc="(550,140)" name="Register_8Bit">
       <a name="label" val="Register_8Bit_1"/>
       <a name="labelvisible" val="false"/>
@@ -615,16 +637,25 @@
       <a name="label" val="ALU_1"/>
       <a name="labelvisible" val="false"/>
     </comp>
-    <wire from="(110,140)" to="(140,140)"/>
-    <wire from="(110,180)" to="(140,180)"/>
-    <wire from="(190,160)" to="(330,160)"/>
+    <wire from="(1030,160)" to="(1060,160)"/>
+    <wire from="(1070,170)" to="(1070,250)"/>
+    <wire from="(1070,250)" to="(1070,260)"/>
+    <wire from="(1090,150)" to="(1100,150)"/>
+    <wire from="(1100,110)" to="(1100,150)"/>
+    <wire from="(210,160)" to="(210,250)"/>
+    <wire from="(210,160)" to="(330,160)"/>
+    <wire from="(210,250)" to="(740,250)"/>
     <wire from="(310,180)" to="(330,180)"/>
     <wire from="(310,200)" to="(330,200)"/>
-    <wire from="(330,120)" to="(330,140)"/>
-    <wire from="(330,120)" to="(880,120)"/>
+    <wire from="(330,110)" to="(1100,110)"/>
+    <wire from="(330,110)" to="(330,140)"/>
     <wire from="(550,160)" to="(640,160)"/>
     <wire from="(640,140)" to="(640,160)"/>
     <wire from="(640,140)" to="(660,140)"/>
-    <wire from="(880,120)" to="(880,140)"/>
+    <wire from="(790,230)" to="(830,230)"/>
+    <wire from="(790,270)" to="(830,270)"/>
+    <wire from="(880,140)" to="(1060,140)"/>
+    <wire from="(880,250)" to="(1070,250)"/>
+    <wire from="(880,290)" to="(920,290)"/>
   </circuit>
 </project>

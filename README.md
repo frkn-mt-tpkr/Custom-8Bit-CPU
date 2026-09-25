@@ -216,10 +216,11 @@ Binary:   1110     0000           1111     0000
 | `0001` | `1x` | **ADD** | `0001_AAAA` | `A ← A + RAM[AAAA]` | 6 |
 | `0010` | `2x` | **LDA** | `0010_AAAA` | `A ← RAM[AAAA]` | 5 |
 | `0011` | `3x` | **SUB** | `0011_AAAA` | `A ← A − RAM[AAAA]` | 6 |
+| `0100` | `4x` | **JMP** | `0100_AAAA` | `PC ← AAAA` | 4 |
 | `1110` | `Ex` | **OUT** | `1110_xxxx` | `OUT_PORT ← A` | 4 |
 | `1111` | `Fx` | **HLT** | `1111_xxxx` | Halt (freeze step counter) | 4 |
 
-> **Note:** There are no jump or branch instructions yet — the PC can only increment sequentially.
+> **Note:** `JMP` is unconditional. Conditional branches (JZ, JC) need a flags register, which is not implemented yet.
 
 ---
 
@@ -246,6 +247,7 @@ After fetch, the behavior depends on the opcode stored in IR[7:4]:
 | **LDA** | `EI, LM` → IR[3:0] → MAR | `RO, LA` → RAM[MAR] → A | — |
 | **ADD** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, LA` → A+B → A |
 | **SUB** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, SUB, LA` → A−B → A |
+| **JMP** | `EI, PC_LOAD` → IR[3:0] → PC | — | — |
 | **OUT** | `LO, A_OUT` → A → Output Reg | — | — |
 | **HLT** | `halted ← 1` (counter frozen) | — | — |
 
@@ -274,6 +276,7 @@ Step counter advances on NEGEDGE → signals are ready BEFORE the next POSEDGE
 |---|---|---|---|
 | `PC_OUT` | PC Output Enable | PC → Bus | Drive PC value onto the bus |
 | `PC_INC` | PC Increment | — | Increment program counter by 1 |
+| `PC_LOAD` | PC Load | Bus → PC | Latch the bus value into the PC (asserted at a JMP instruction's T3) |
 | `LI` | Load IR | Bus → IR | Latch bus value into Instruction Register |
 | `LM` | Load MAR | Bus → MAR | Latch bus value into Memory Address Register |
 | `EI` | Enable IR | IR → Bus | Drive IR[3:0] (zero-extended) onto the bus |
@@ -348,12 +351,14 @@ Instead of a dedicated counter chip, the PC reuses the ALU module to compute `PC
 |---|---|---|
 | `register_unit_8b` | Stores current PC value | `MONITOR` → ALU input A |
 | `alu_8b_add_sub` | Computes `PC + 1` | B hardwired to `0x01`, Subtraction = `0` |
-| AND gate | Gated clock (`CLK & PC_INC`) | Output → Register CLK |
+| 8-bit multiplexer | Selects the next PC value | `PC_LOAD=0` → `PC + 1`, `PC_LOAD=1` → bus (jump target) |
+| AND/OR gates | Gated clock (`CLK & (PC_INC \| PC_LOAD)`) | Output → Register CLK |
 | `PC_OUT` pin | Tri-state bus enable | Connected to Register `REG_OUT` |
 
 | Property | Value |
 |---|---|
-| Feedback loop | Register → MONITOR → ALU (+1) → result → Register Data_In |
+| Counting loop | Register → MONITOR → ALU (+1) → mux → Register Data_In |
+| Jump path | Bus → `Data_In` → mux → Register Data_In |
 | Logisim source | `circuits/Prog_Counter.circ` |
 | Verilog source | `rtl/program_counter.v` |
 
@@ -654,6 +659,21 @@ F0        // HLT       — halt
 
 Expected result: `OUT_PORT = 0x1E` (30 in decimal). This program is in `asm/subtract.asm`.
 
+#### Example 4: Jump over an instruction
+
+```
+26        // LDA 0x6   — load 5 from address 6
+44        // JMP 0x4   — continue at address 4
+17        // ADD 0x7   — skipped; would add 100
+F0        // HLT       — skipped
+E0        // OUT       — address 4: output the result
+F0        // HLT       — address 5: halt
+05        // 0x05 = 5 decimal
+64        // 0x64 = 100 decimal (must not be added)
+```
+
+Expected result: `OUT_PORT = 0x05`. If the jump failed, execution would fall through to `ADD 0x7`, leaving A = 105, and the `HLT` at address 3 would stop the CPU before `OUT` ever ran — so the output would stay `0x00`. This program is in `asm/jump.asm`.
+
 > **Tip:** When converting decimal to hex for the data bytes, remember:
 > - Decimal `13` → Hex `0D`
 > - Decimal `25` → Hex `19`
@@ -826,7 +846,7 @@ Subtraction = 1 (SUB):   Result = A + (~B) + 1 = A - B  (two's complement)
 
 ![Program Counter Schematic](docs/logisim_schematics/Program_Counter.png)
 
-**A register + ALU combo that counts up by 1.** Instead of using a dedicated counter chip, the Program Counter cleverly reuses the components we already built.
+**A register + ALU combo that counts up by 1, or loads an address for a jump.** Instead of using a dedicated counter chip, the Program Counter reuses the components we already built.
 
 **What you see in the schematic:**
 
@@ -836,15 +856,17 @@ Subtraction = 1 (SUB):   Result = A + (~B) + 1 = A - B  (two's complement)
   - Input A ← Register's `MONITOR` output (current PC value)
   - Input B ← hardwired constant `0x01` (the number 1)
   - Subtraction ← hardwired `0` (always addition mode)
-  - The ALU continuously computes `PC + 1`, and its result feeds back to the register's `Data_In`
+  - The ALU continuously computes `PC + 1`
 
-- **AND gate (left):** Creates a **gated clock** from `CLK & PC_INC`. The register only latches the new value when `PC_INC` is asserted. This is how the Control Unit controls when the PC advances — only at T1 of each instruction cycle.
+- **Multiplexer:** Chooses what the register latches next. With `PC_LOAD = 0` the ALU result (`PC + 1`) passes through, so the PC counts. With `PC_LOAD = 1` the `Data_In` value from the bus passes through, so the PC jumps. This is the whole mechanism behind `JMP`.
+
+- **AND + OR gates (left):** Create a **gated clock** from `CLK & (PC_INC | PC_LOAD)`. The register latches only when the PC is either counting or being loaded — without the OR, a jump would never be clocked in.
 
 - **`PC_OUT` → `REG_OUT`:** Controls when the PC value drives the bus. Connected to the register's tri-state output enable.
 
 - **`RESET`:** Clears the register to 0, restarting execution from address 0x0.
 
-**The feedback loop:** `Register → MONITOR → ALU (+ 1) → result → Register Data_In`. The ALU result is always ready; it only gets latched when the gated clock fires.
+**Two paths into the register:** counting is `Register → MONITOR → ALU (+1) → mux → Data_In`, and jumping is `Bus → Data_In → mux → Data_In`. The multiplexer decides which one wins; the gated clock decides when it lands.
 
 ---
 
@@ -1135,7 +1157,7 @@ interface, then the CPU executes it.
 | Status | Feature | Description |
 |:---:|---|---|
 | ✅ | **SUB instruction** | Opcode `0011`; reuses the ADD datapath with the ALU in subtract mode |
-| ⬜ | **JMP instruction** | Direct load into Program Counter (unconditional jump) |
+| ✅ | **JMP instruction** | Opcode `0100`; multiplexer in the Program Counter loads the target from the bus |
 | ⬜ | **Conditional branching** (JZ, JC) | Requires adding a Flags Register (Zero, Carry, Overflow) |
 | ⬜ | **STA instruction** | Store accumulator value to a RAM address |
 | ⬜ | **Expanded address space** | Use full 8-bit address for 256 bytes of RAM |

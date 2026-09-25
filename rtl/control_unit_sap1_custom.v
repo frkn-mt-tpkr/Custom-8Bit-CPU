@@ -18,7 +18,8 @@ module control_unit_sap1_custom (
     output wire ALU_OUT,
     output wire LO,
     output wire A_OUT,
-    output wire SUB
+    output wire SUB,
+    output wire PC_LOAD
 );
 
     // Ring Counter T0 - T7
@@ -47,6 +48,7 @@ module control_unit_sap1_custom (
     wire ADD_ins = (OPCODE == 4'b0001);
     wire SUB_ins = (OPCODE == 4'b0011);
     wire LDA_ins = (OPCODE == 4'b0010);
+    wire JMP_ins = (OPCODE == 4'b0100);
     wire OUT_ins = (OPCODE == 4'b1110);
     wire HLT_ins = (OPCODE == 4'b1111);
 
@@ -59,14 +61,16 @@ module control_unit_sap1_custom (
     assign PC_INC  = T1;
     assign LI      = T2;
 
-    assign EI      = T3 & (ADD_SUB_ins | LDA_ins);
+    assign EI      = T3 & (ADD_SUB_ins | LDA_ins | JMP_ins);
 
     // L_MBR and RI are only needed during programming mode (MANUAL signals).
     // The control unit should NEVER assert them during normal execution.
     assign L_MBR   = 1'b0;
     assign RI      = 1'b0;
 
-    assign LM      = T0 | (T3 & (ADD_SUB_ins | LDA_ins));
+    // LM follows EI, so a JMP also loads MAR with the target. Harmless: the
+    // next T0 overwrites MAR before any RAM access uses it.
+    assign LM      = T0 | EI;
 
     // T3: OUT instruction
     assign LO      = T3 & OUT_ins;
@@ -85,5 +89,8 @@ module control_unit_sap1_custom (
 
     // Put the ALU in subtract mode only during T5 of SUB
     assign SUB     = T5 & SUB_ins;
+
+    // Load the PC from the bus during T3 of JMP
+    assign PC_LOAD = T3 & JMP_ins;
 
 endmodule

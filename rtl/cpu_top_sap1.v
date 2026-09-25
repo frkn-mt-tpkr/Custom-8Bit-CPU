@@ -27,6 +27,7 @@ module cpu_top_sap1 (
 
     wire cu_pc_out, cu_pc_inc, cu_li, cu_lm, cu_ei, cu_l_mbr;
     wire cu_ri, cu_ro, cu_la, cu_lb, cu_alu_out, cu_lo, cu_a_out, cu_sub;
+    wire cu_pc_load;
 
     control_unit_sap1_custom control_unit (
         .CLK(cu_clk),
@@ -45,7 +46,8 @@ module cpu_top_sap1 (
         .ALU_OUT(cu_alu_out),
         .LO(cu_lo),
         .A_OUT(cu_a_out),
-        .SUB(cu_sub)
+        .SUB(cu_sub),
+        .PC_LOAD(cu_pc_load)
     );
 
     // Prevent CU from occupying the Bus when PROG_MODE is 1
@@ -66,8 +68,10 @@ module cpu_top_sap1 (
     program_counter pc (
         .CLK(MAIN_CLK),
         .PC_INC(cu_pc_inc),
+        .PC_LOAD(cu_pc_load),
         .RESET(MAIN_RESET),
         .PC_OUT(pc_out),
+        .Data_In(main_bus),
         .Bus_Out(main_bus)
     );
 
