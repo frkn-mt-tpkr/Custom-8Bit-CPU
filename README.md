@@ -1186,4 +1186,6 @@ interface, then the CPU executes it.
 
 ## 📄 License
 
-This project was developed for educational purposes.
+This project was developed for educational purposes and is licensed under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Furkan Umut Topkır
