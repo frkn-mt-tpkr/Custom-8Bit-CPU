@@ -28,11 +28,14 @@ module cpu_top_sap1 (
     wire cu_pc_out, cu_pc_inc, cu_li, cu_lm, cu_ei, cu_l_mbr;
     wire cu_ri, cu_ro, cu_la, cu_lb, cu_alu_out, cu_lo, cu_a_out, cu_sub;
     wire cu_pc_load;
+    reg  z_flag, c_flag;
 
     control_unit_sap1_custom control_unit (
         .CLK(cu_clk),
         .RESET(MAIN_RESET),
         .OPCODE(ir_monitor[7:4]),
+        .Z_FLAG(z_flag),
+        .C_FLAG(c_flag),
         .PC_OUT(cu_pc_out),
         .PC_INC(cu_pc_inc),
         .LI(cu_li),
@@ -107,14 +110,32 @@ module cpu_top_sap1 (
     );
 
     wire [7:0] alu_res;
+    wire       alu_carry;
     alu_8b_add_sub alu (
         .A(a_monitor),
         .B(b_monitor),
         .Subtraction(cu_sub),
         .res(alu_res),
-        .Overflow()
+        .Overflow(alu_carry)
     );
-    assign main_bus = alu_out ? alu_res : 8'bzzzzzzzz; 
+    assign main_bus = alu_out ? alu_res : 8'bzzzzzzzz;
+
+    // Flags register: Z and C are captured on the same edge that writes the
+    // ALU result into A. Clocking on ALU_OUT rather than LA keeps LDA from
+    // overwriting the flags with whatever the idle ALU is computing.
+    wire alu_zero  = ~(alu_res[0] | alu_res[1] | alu_res[2] | alu_res[3] |
+                       alu_res[4] | alu_res[5] | alu_res[6] | alu_res[7]);
+    wire flags_clk = MAIN_CLK & cu_alu_out;
+
+    always @(posedge flags_clk or posedge MAIN_RESET) begin
+        if (MAIN_RESET) begin
+            z_flag <= 1'b0;
+            c_flag <= 1'b0;
+        end else begin
+            z_flag <= alu_zero;
+            c_flag <= alu_carry;
+        end
+    end
 
     wire [7:0] mar_monitor;
     register_unit_8b mar (

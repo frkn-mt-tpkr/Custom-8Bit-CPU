@@ -119,8 +119,12 @@ module cpu_prog_tb;
             uut.ram.bank_0.reg_2.q_out, uut.ram.bank_0.reg_3.q_out,
             uut.ram.bank_1.reg_0.q_out, uut.ram.bank_1.reg_1.q_out);
 
-        // Run the program
-        #400;
+        // Run until HLT freezes the step counter, giving up after 2000 cycles
+        for (i = 0; i < 2000 && uut.control_unit.halted !== 1'b1; i = i + 1)
+            @(posedge MAIN_CLK);
+
+        if (uut.control_unit.halted !== 1'b1)
+            $display("TIMEOUT: CPU did not reach HLT");
 
         if (OUT_PORT !== 8'h14)
             $display("FAIL: OUT_PORT=0x%02H, expected 0x14", OUT_PORT);

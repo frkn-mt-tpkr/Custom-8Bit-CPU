@@ -18,12 +18,14 @@ OPCODES = {
     "ADD": 0x1,
     "SUB": 0x3,
     "JMP": 0x4,
+    "JZ":  0x5,
+    "JC":  0x6,
     "OUT": 0xE,
     "HLT": 0xF,
 }
 
 # Mnemonics that take an address operand; the rest ignore the lower nibble.
-NEEDS_OPERAND = {"LDA", "ADD", "SUB", "JMP"}
+NEEDS_OPERAND = {"LDA", "ADD", "SUB", "JMP", "JZ", "JC"}
 
 
 def assemble_line(line):

@@ -7,3 +7,9 @@ cpu_prog_test
 reg_test
 sram_test
 ram_test
+
+# Logisim autosave backups
+*.autosave
+
+# Windows folder metadata
+desktop.ini

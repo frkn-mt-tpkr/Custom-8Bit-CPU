@@ -49,7 +49,7 @@ The entire design was **first prototyped and verified in Logisim Evolution** at 
 │                                                                          │
 │                       ┌───────────────────┐                              │
 │                       │   CONTROL UNIT    │                              │
-│                       │  (6-Step FSM)     │                              │
+│                       │  (8-Step FSM)     │                              │
 │                       └───────────────────┘                              │
 │                                                                          │
 │               ┌────────────────────────────────┐                         │
@@ -66,6 +66,7 @@ The entire design was **first prototyped and verified in Logisim Evolution** at 
 | **Address Space** | 16 bytes (4-bit address, `0x0`–`0xF`) |
 | **Instruction Format** | `[OPCODE (4-bit)][ADDRESS (4-bit)]` |
 | **ALU Operations** | Addition & Subtraction (two's complement) |
+| **Branching** | `JMP` (unconditional), `JZ` / `JC` on the Z and C flags |
 | **RAM** | 16 bytes, fully register-based (no behavioral arrays) |
 | **Clock** | Testbench: 125 MHz (8ns period) |
 | **Clock Edges** | Data latch: `posedge CLK` / Step counter: `negedge CLK` |
@@ -80,7 +81,7 @@ Custom_8Bit_CPU_Project/
 │
 ├── rtl/                              # Synthesizable Verilog source code
 │   ├── cpu_top_sap1.v                #   Top module — connects everything
-│   ├── control_unit_sap1_custom.v    #   Control Unit (6-step FSM)
+│   ├── control_unit_sap1_custom.v    #   Control Unit (8-step FSM)
 │   ├── alu_8b_add_sub.v              #   8-bit ALU (adder/subtractor)
 │   ├── program_counter.v             #   Program Counter (register + ALU)
 │   ├── ram_16byte.v                  #   16-Byte RAM (4 banks × 4 cells)
@@ -90,7 +91,11 @@ Custom_8Bit_CPU_Project/
 │
 ├── asm/                              # Assembler toolchain
 │   ├── assembler.py                  #   Assembles .asm source into hex
-│   ├── program.asm                   #   Sample program (assembly source)
+│   ├── program.asm                   #   Sample program: 13 + 7
+│   ├── subtract.asm                  #   Example: 50 - 20
+│   ├── jump.asm                      #   Example: JMP over an instruction
+│   ├── countdown.asm                 #   Example: loop with JZ (5 down to 1)
+│   ├── carry.asm                     #   Example: branch on carry with JC
 │   └── program.hex                   #   Assembled machine code
 │
 ├── tb/                               # Testbenches
@@ -134,13 +139,15 @@ cpu_top_sap1 (TOP MODULE)
 ├── control_unit_sap1_custom        — FSM, generates all control signals
 ├── program_counter                 — Counts instruction addresses
 │   ├── register_unit_8b            — Stores current PC value
-│   └── alu_8b_add_sub              — Computes PC + 1
-│       └── full_adder_1b (×8)      — Ripple-carry chain
+│   ├── alu_8b_add_sub              — Computes PC + 1
+│   │   └── full_adder_1b (×8)      — Ripple-carry chain
+│   └── 8-bit mux                   — PC + 1 or jump target
 ├── register_unit_8b (IR)           — Holds current instruction
 ├── register_unit_8b (Register A)   — Accumulator
 ├── register_unit_8b (Register B)   — Second operand
 ├── alu_8b_add_sub (Main ALU)       — Performs A + B or A - B
 │   └── full_adder_1b (×8)          — Ripple-carry chain
+├── Flags (Z, C)                    — 2 flip-flops, clocked by ALU_OUT
 ├── register_unit_8b (MAR)          — Memory Address Register
 ├── register_unit_8b (MBR)          — Memory Buffer Register
 ├── ram_16byte                      — Main memory
@@ -149,7 +156,7 @@ cpu_top_sap1 (TOP MODULE)
 └── register_unit_8b (Output Reg)   — Drives OUT_PORT
 ```
 
-**Component count:** 24× `register_unit_8b` | 16× `full_adder_1b` | 2× `alu_8b_add_sub`
+**Component count:** 23× `register_unit_8b` (7 in the datapath + 16 RAM cells) | 16× `full_adder_1b` | 2× `alu_8b_add_sub`
 
 ---
 
@@ -217,16 +224,31 @@ Binary:   1110     0000           1111     0000
 | `0010` | `2x` | **LDA** | `0010_AAAA` | `A ← RAM[AAAA]` | 5 |
 | `0011` | `3x` | **SUB** | `0011_AAAA` | `A ← A − RAM[AAAA]` | 6 |
 | `0100` | `4x` | **JMP** | `0100_AAAA` | `PC ← AAAA` | 4 |
+| `0101` | `5x` | **JZ** | `0101_AAAA` | `PC ← AAAA` if Z = 1 | 4 |
+| `0110` | `6x` | **JC** | `0110_AAAA` | `PC ← AAAA` if C = 1 | 4 |
 | `1110` | `Ex` | **OUT** | `1110_xxxx` | `OUT_PORT ← A` | 4 |
 | `1111` | `Fx` | **HLT** | `1111_xxxx` | Halt (freeze step counter) | 4 |
 
-> **Note:** `JMP` is unconditional. Conditional branches (JZ, JC) need a flags register, which is not implemented yet.
+### Flags
+
+Two flags are captured from the ALU whenever `ADD` or `SUB` writes its result into A:
+
+| Flag | Set when | Hardware |
+|:---:|---|---|
+| **Z** (Zero) | the result is `0x00` | 8-input NOR over the ALU result |
+| **C** (Carry) | the adder carries out of bit 7 | the ALU's carry-out (`Overflow` pin) |
+
+The flags are clocked by `ALU_OUT`, not `LA`. `LA` is also active during `LDA`, when the ALU is computing a meaningless sum of whatever A and B hold; clocking on it would let an `LDA` silently overwrite the flags of the previous `ADD`/`SUB`.
+
+After `SUB`, C = 1 means **no borrow** (A ≥ B), as is usual for two's-complement subtraction.
 
 ---
 
 ## ⚙️ Control Unit — State Machine
 
-The Control Unit uses a **3-bit step counter** (values 0–5) that advances on **`negedge CLK`**. This half-cycle offset ensures control signals are set up before the next rising edge latches data.
+The Control Unit uses a **3-bit step counter** (T0–T7) that advances on **`negedge CLK`**. This half-cycle offset ensures control signals are set up before the next rising edge latches data.
+
+The counter is free-running: it always wraps from T7 back to T0. Steps an instruction does not use are idle, so every instruction occupies 8 clock cycles. The "Clock Cycles" column in the instruction table counts only the useful steps.
 
 ### Fetch Cycle (Common to All Instructions)
 
@@ -248,6 +270,7 @@ After fetch, the behavior depends on the opcode stored in IR[7:4]:
 | **ADD** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, LA` → A+B → A |
 | **SUB** | `EI, LM` → IR[3:0] → MAR | `RO, LB` → RAM[MAR] → B | `ALU_OUT, SUB, LA` → A−B → A |
 | **JMP** | `EI, PC_LOAD` → IR[3:0] → PC | — | — |
+| **JZ / JC** | `EI` → IR[3:0] → Bus; `PC_LOAD` only if the flag is set | — | — |
 | **OUT** | `LO, A_OUT` → A → Output Reg | — | — |
 | **HLT** | `halted ← 1` (counter frozen) | — | — |
 
@@ -276,7 +299,7 @@ Step counter advances on NEGEDGE → signals are ready BEFORE the next POSEDGE
 |---|---|---|---|
 | `PC_OUT` | PC Output Enable | PC → Bus | Drive PC value onto the bus |
 | `PC_INC` | PC Increment | — | Increment program counter by 1 |
-| `PC_LOAD` | PC Load | Bus → PC | Latch the bus value into the PC (asserted at a JMP instruction's T3) |
+| `PC_LOAD` | PC Load | Bus → PC | Latch the bus value into the PC at T3 of JMP, or of JZ/JC when their flag is set |
 | `LI` | Load IR | Bus → IR | Latch bus value into Instruction Register |
 | `LM` | Load MAR | Bus → MAR | Latch bus value into Memory Address Register |
 | `EI` | Enable IR | IR → Bus | Drive IR[3:0] (zero-extended) onto the bus |
@@ -322,7 +345,7 @@ The universal storage building block — reused across the entire CPU:
 | **Async reset** | Clears to `0x00` when `RESET` is asserted |
 | **Tri-state output** | `Bus_Out` drives the bus only when `REG_OUT=1`, otherwise high-Z (`8'bz`) |
 | **Monitor port** | `MONITOR` always reflects the stored value (debug / internal wiring) |
-| **Instances in CPU** | 24× (IR, A, B, MAR, MBR, OUT, PC register, 16 RAM cells) |
+| **Instances in CPU** | 23× (IR, A, B, MAR, MBR, OUT, PC register, 16 RAM cells) |
 | **Logisim source** | `circuits/Register_Unit.circ` |
 | **Verilog source** | `rtl/register_unit_8b.v` |
 
@@ -412,8 +435,9 @@ The FSM brain of the CPU — orchestrates all operations:
 |---|---|
 | 3× JK Flip-Flops | 3-bit step counter, advances on `negedge CLK` |
 | 8× Timing decoders | T0–T7 one-hot signals decoded from counter value |
-| 4-bit Decoder | OPCODE → one-hot instruction signals (ADD, LDA, OUT, HLT) |
-| AND/OR gate network | Combines timing × instruction → 13 control outputs |
+| 4-bit Decoder | OPCODE → one-hot instruction signals (ADD, LDA, SUB, JMP, JZ, JC, OUT, HLT) |
+| AND/OR gate network | Combines timing × instruction × flags → 15 control outputs |
+| Flag inputs | `Z_flag`, `C_flag` from the top module; decide whether JZ/JC load the PC |
 | Halt flag | `T3 & HLT` → freezes step counter permanently (until reset) |
 
 | Property | Value |
@@ -456,6 +480,7 @@ The CPU operates in two phases: first you **program the RAM** (bootloader), then
 
 1. Set the **`PROG_MODE`** switch to `1` (this puts the CPU to sleep — the Control Unit's clock is disabled)
 2. Press the **`MAIN_RESET`** button once and release (the CPU registers, PC, and the step counter are cleared to zero — RAM is not tied to reset, so it is unaffected)
+3. Set **`MANUEL_DATA_OE`** to `1` (the manual data input now drives the bus)
 
 ### Phase 2: Programming the RAM (Bootloader)
 
@@ -480,6 +505,7 @@ We will load the following program into RAM:
 | `0x0` | `0x2E` | `LDA 0xE` | Load value at address 0xE into A |
 | `0x1` | `0x1F` | `ADD 0xF` | Add value at address 0xF to A |
 | `0x2` | `0xE0` | `OUT` | Output A to the display |
+| `0x3` | `0xF0` | `HLT` | Stop the CPU |
 | `0xE` | `0x0D` | *(data: 13)* | First number |
 | `0xF` | `0x07` | *(data: 7)* | Second number |
 
@@ -516,7 +542,17 @@ We will load the following program into RAM:
 
 ---
 
-**Byte 4 — Data: `13` at address `0xE`**
+**Byte 4 — Instruction: `HLT` at address `0x3`**
+
+1. Enter **`0x03`** → **LM** pulse → *(MAR = 0x03)*
+2. Enter **`0xF0`** → **L_MBR** pulse → *(MBR = 0xF0)*
+3. **RI** pulse → *RAM[0x3] = 0xF0 ✓*
+
+Without this byte the program still shows `14`, but the CPU keeps running: it fetches `0x00` from the empty addresses, treats them as unknown opcodes, and eventually wraps back to address 0.
+
+---
+
+**Byte 5 — Data: `13` at address `0xE`**
 
 1. Enter **`0x0E`** → **LM** pulse → *(MAR = 0x0E)*
 2. Enter **`0x0D`** → **L_MBR** pulse → *(MBR = 0x0D — this is 13 in decimal!)*
@@ -524,7 +560,7 @@ We will load the following program into RAM:
 
 ---
 
-**Byte 5 — Data: `7` at address `0xF`**
+**Byte 6 — Data: `7` at address `0xF`**
 
 1. Enter **`0x0F`** → **LM** pulse → *(MAR = 0x0F)*
 2. Enter **`0x07`** → **L_MBR** pulse → *(MBR = 0x07 — this is 7 in decimal!)*
@@ -534,7 +570,7 @@ We will load the following program into RAM:
 
 ### Phase 3: Execution
 
-1. Set the manual data input pins to **`0x00`** (clear the bus — hand it back to the CPU)
+1. Set **`MANUEL_DATA_OE`** to `0` (release the bus — hand it back to the CPU; with `OE = 1` the manual input would keep driving the bus and clash with the PC, RAM and ALU)
 2. Set **`PROG_MODE`** to `0` (control is now transferred to the CPU)
 3. Press **`MAIN_RESET`** once and release (PC and step counter are reset to 0, ready for T0; the program you just loaded stays in RAM, which is not tied to reset)
 4. Start the automatic clock from the Logisim menu: **Simulate → Tick Enabled** (or press **Ctrl+K**)
@@ -543,8 +579,78 @@ The CPU will now execute the program automatically:
 - **T0–T4:** Fetch and execute `LDA 0xE` → Register A = 13
 - **T0–T5:** Fetch and execute `ADD 0xF` → Register A = 13 + 7 = 20
 - **T0–T3:** Fetch and execute `OUT` → Output Register = 20 (displayed as `0x14`)
+- **T0–T3:** Fetch and execute `HLT` → the step counter freezes
 
-The hexadecimal display in Logisim will show **`14`** (which is 20 in decimal). 🎉
+Each instruction still spends 8 clock ticks (T0–T7); the steps after its last useful one are idle. The hexadecimal display in Logisim will show **`14`** (which is 20 in decimal). 🎉
+
+> **Tip:** Programs with loops run for well over a hundred ticks (the countdown below takes about 165). Raise the speed from **Simulate → Tick Frequency** so you don't wait too long.
+
+### More Programs to Try in Logisim
+
+Every program is loaded the same way as 13 + 7: run Phase 1, write each byte with the three pulses of Phase 2, then start it with Phase 3. Bytes left over from an earlier program don't matter as long as the new program overwrites every address it uses.
+
+#### Countdown Loop: 5, 4, 3, 2, 1 (`SUB`, `JZ`, `JMP`)
+
+The CPU shows a number, subtracts 1, and repeats until the result is zero. Nobody tells it how many times to loop; it checks the Z flag after each `SUB` and leaves on its own. Source: `asm/countdown.asm`.
+
+| Address | Hex Value | Instruction | Description |
+|:---:|:---:|:---:|---|
+| `0x0` | `0x27` | `LDA 0x7` | A ← 5 (start value) |
+| `0x1` | `0xE0` | `OUT` | **Loop start:** show A on the display |
+| `0x2` | `0x38` | `SUB 0x8` | A ← A − 1; Z becomes 1 when A reaches 0 |
+| `0x3` | `0x55` | `JZ 0x5` | If Z = 1, leave the loop and go to HLT |
+| `0x4` | `0x41` | `JMP 0x1` | Otherwise go back to the loop start |
+| `0x5` | `0xF0` | `HLT` | Stop the CPU |
+| `0x7` | `0x05` | *(data: 5)* | Start value |
+| `0x8` | `0x01` | *(data: 1)* | Amount to subtract each time |
+
+Address `0x6` is never used, so it does not need to be loaded.
+
+**Loading (8 bytes, three pulses each):**
+
+| Byte | 1. Enter, then **LM** pulse | 2. Enter, then **L_MBR** pulse | 3. **RI** pulse |
+|:---:|:---:|:---:|---|
+| 1 | `0x00` | `0x27` | RAM[0x0] = `0x27` ✓ |
+| 2 | `0x01` | `0xE0` | RAM[0x1] = `0xE0` ✓ |
+| 3 | `0x02` | `0x38` | RAM[0x2] = `0x38` ✓ |
+| 4 | `0x03` | `0x55` | RAM[0x3] = `0x55` ✓ |
+| 5 | `0x04` | `0x41` | RAM[0x4] = `0x41` ✓ |
+| 6 | `0x05` | `0xF0` | RAM[0x5] = `0xF0` ✓ |
+| 7 | `0x07` | `0x05` | RAM[0x7] = `0x05` ✓ |
+| 8 | `0x08` | `0x01` | RAM[0x8] = `0x01` ✓ |
+
+**What you will see after starting the clock:**
+
+| Pass | Display (`OUT`) | A after `SUB` | Z | `JZ 0x5` |
+|:---:|:---:|:---:|:---:|---|
+| 1 | `05` | 4 | 0 | not taken → `JMP 0x1` back to the loop start |
+| 2 | `04` | 3 | 0 | not taken → back |
+| 3 | `03` | 2 | 0 | not taken → back |
+| 4 | `02` | 1 | 0 | not taken → back |
+| 5 | `01` | 0 | **1** | **taken** → `HLT` |
+
+- The display drops by one about every **32 ticks**: one pass is 4 instructions (`OUT`, `SUB`, `JZ`, `JMP`) × 8 ticks.
+- `FF_Z` next to the ALU stays at 0 through the loop and turns 1 only after the last `SUB`.
+- The display ends on **`01`**, not `00`. The last `SUB` makes A = 0, but `JZ` jumps to `HLT` before `OUT` can run again. Register A itself holds `00` at the end.
+
+#### Branch on Carry (`JC`)
+
+200 + 100 = 300 does not fit in 8 bits, so the adder carries out of bit 7 and sets C. Source: `asm/carry.asm`.
+
+| Address | Hex Value | Instruction | Description |
+|:---:|:---:|:---:|---|
+| `0x0` | `0x26` | `LDA 0x6` | A ← 200 |
+| `0x1` | `0x17` | `ADD 0x7` | A ← 200 + 100 = 300, wraps to 44 and sets C |
+| `0x2` | `0x64` | `JC 0x4` | C = 1, so jump to address 4 |
+| `0x3` | `0xF0` | `HLT` | Skipped by the jump |
+| `0x4` | `0xE0` | `OUT` | Show A |
+| `0x5` | `0xF0` | `HLT` | Stop the CPU |
+| `0x6` | `0xC8` | *(data: 200)* | First number |
+| `0x7` | `0x64` | *(data: 100)* | Second number |
+
+The display shows **`2C`** (44 = 300 − 256) and `FF_C` is 1. If `JC` did not jump, the `HLT` at address 3 would stop the CPU before `OUT` and the display would stay at `00`.
+
+The other examples in [How to Modify the Program](#how-to-modify-the-program) (subtraction, `JMP`) load the same way: line N of a hex listing goes to address N.
 
 ---
 
@@ -674,6 +780,22 @@ F0        // HLT       — address 5: halt
 
 Expected result: `OUT_PORT = 0x05`. If the jump failed, execution would fall through to `ADD 0x7`, leaving A = 105, and the `HLT` at address 3 would stop the CPU before `OUT` ever ran — so the output would stay `0x00`. This program is in `asm/jump.asm`.
 
+#### Example 5: Count down with a loop
+
+```
+27        // LDA 0x7   — A = 5
+E0        // OUT       — address 1: loop start, show A
+38        // SUB 0x8   — A = A - 1, updates Z
+55        // JZ  0x5   — leave the loop when A = 0
+41        // JMP 0x1   — otherwise repeat
+F0        // HLT       — address 5
+00        // (unused — address 6)
+05        // 0x05 = start value
+01        // 0x01 = step
+```
+
+The output shows **5, 4, 3, 2, 1** and the CPU halts. The program never knows in advance how many times the loop runs; it checks the Z flag after every `SUB` and leaves on its own. This program is in `asm/countdown.asm`; `asm/carry.asm` shows the same idea with `JC` (200 + 100 overflows, the jump is taken, output `0x2C`).
+
 > **Tip:** When converting decimal to hex for the data bytes, remember:
 > - Decimal `13` → Hex `0D`
 > - Decimal `25` → Hex `19`
@@ -686,14 +808,15 @@ Expected result: `OUT_PORT = 0x05`. If the jump failed, execution would fall thr
 
 Instead of hand-encoding each instruction, a small Python assembler
 (`asm/assembler.py`) translates human-readable assembly into the `program.hex`
-machine code. The instruction set is tiny, so the whole assembler is about a
-hundred lines.
+machine code. The instruction set is tiny, so the whole assembler is about
+sixty lines.
 
 ### Assembly Syntax
 
 | Form | Meaning |
 |---|---|
-| `LDA n` / `ADD n` | Instruction with a 4-bit address operand |
+| `LDA n` / `ADD n` / `SUB n` | Instruction with a 4-bit address operand |
+| `JMP n` / `JZ n` / `JC n` | Jump to address `n` (always, if Z = 1, if C = 1) |
 | `OUT` / `HLT` | Instruction with no operand |
 | `DB n` | Define a raw data byte (decimal, `0x..`, or `0b..`) |
 | `; ...` | Comment (ignored) |
@@ -738,11 +861,14 @@ This approach ensures that what runs in simulation (`iverilog`) behaves identica
 |---|---|
 | Wires and tunnels | `wire` declarations |
 | Input/Output pins | `input wire` / `output wire` ports |
-| AND, OR, XOR, NOT gates | `&`, `\|`, `^`, `~` operators via `assign` |
+| AND, OR, XOR, NOT, NOR gates | `&`, `\|`, `^`, `~`, `~(a \| b ...)` operators via `assign` |
+| Multiplexer | Ternary operator `sel ? in1 : in0` |
+| Decoder | Equality compare, e.g. `OPCODE == 4'b0101` |
 | Subcircuit instances | Module instantiation |
 | Splitters (bus split/merge) | Bit slicing `[7:4]`, `[3:0]`, concatenation `{a, b}` |
 | Controlled buffers (tri-state) | Ternary operator `condition ? data : 8'bz` |
 | D Flip-Flop | `always @(posedge CLK)` with `reg` |
+| JK Flip-Flop counter (step counter) | `always @(negedge CLK)` incrementing a 3-bit `reg` |
 | Clock input | `CLK` port, `always` sensitivity list |
 | Constants | Direct bit literals `8'b00000001`, `1'b0` |
 | Probe / LED | `MONITOR` output wire (always-on debug port) |
@@ -753,7 +879,7 @@ This approach ensures that what runs in simulation (`iverilog`) behaves identica
 
 ## 📸 Circuit Schematics — Deep Dive
 
-Every schematic shown below was built **from scratch in Logisim Evolution** using only the most primitive components available: basic logic gates (AND, OR, XOR, NOT), D flip-flops, splitters, controlled buffers, and wires. **No pre-built CPU components, no ALU chips, no RAM chips, no counter chips** — everything was hand-wired from the ground up.
+Every schematic shown below was built **from scratch in Logisim Evolution** using only the most primitive components available: basic logic gates (AND, OR, XOR, NOT), D and JK flip-flops, splitters, controlled buffers, and wires. **No pre-built CPU components, no ALU chips, no RAM chips, no counter chips** — everything was hand-wired from the ground up.
 
 The design follows a strict bottom-up approach: first build the smallest unit, verify it works, then use it as a building block for the next level up.
 
@@ -799,7 +925,7 @@ This tiny circuit is instantiated **16 times** across the CPU — 8 in the main 
 
 ![8-Bit Register Unit Schematic](docs/logisim_schematics/Register_Unit.png)
 
-**The universal storage building block.** This single design is reused **24 times** throughout the CPU. Looking at the schematic from top to bottom:
+**The universal storage building block.** This single design is reused **23 times** throughout the CPU. Looking at the schematic from top to bottom:
 
 **What you see in the schematic:**
 
@@ -1002,24 +1128,28 @@ Result: RAM[0x05] = Bank 1, Register 1
   
   These timing signals drive all the control logic below.
 
-- **Opcode Decoder (bottom-left):** A **4-bit decoder** takes the `OPCODE[3:0]` input and produces one-hot instruction signals: `ADD`, `LDA`, `OUT`, `HLT`. Each decoded line represents one recognized instruction.
+- **Opcode Decoder (bottom-left):** A **4-bit decoder** takes the `OPCODE[3:0]` input and produces one-hot instruction signals: `ADD`, `LDA`, `SUB`, `JMP`, `JZ`, `JC`, `OUT`, `HLT`. Each decoded line represents one recognized instruction.
 
-- **Control signal generation (bottom half):** A network of AND and OR gates combines timing signals with instruction signals to produce the 13 control outputs:
+- **Control signal generation (bottom half):** A network of AND and OR gates combines timing signals with instruction signals to produce the 15 control outputs:
   - `PC_OUT = T0` (always at step 0)
   - `PC_INC = T1` (always at step 1)
   - `LI = T2` (always at step 2)
-  - `LM = T0 | (T3 & (ADD | LDA))` (step 0, or step 3 for memory instructions)
-  - `EI = T3 & (ADD | LDA)` (step 3, only for ADD/LDA)
-  - `LB = T4 & ADD` (step 4, only for ADD)
-  - `LA = (T4 & LDA) | (T5 & ADD)` (step 4 for LDA, step 5 for ADD)
-  - `RO = T2 | (T4 & (ADD | LDA))` (step 2, or step 4 for memory instructions)
-  - `ALU_OUT = T5 & ADD` (step 5, only for ADD)
+  - `EI = T3 & (ADD | SUB | LDA | JMP | JZ | JC)` (step 3, every instruction with an address)
+  - `LM = T0 | EI` (step 0, or whenever the IR address is on the bus)
+  - `LB = T4 & (ADD | SUB)` (step 4, second operand into B)
+  - `LA = (T4 & LDA) | (T5 & (ADD | SUB))` (step 4 for LDA, step 5 for ADD/SUB)
+  - `RO = T2 | (T4 & (ADD | SUB | LDA))` (step 2, or step 4 for memory instructions)
+  - `ALU_OUT = T5 & (ADD | SUB)` (step 5, ALU result onto the bus)
+  - `SUB = T5 & SUB` (step 5, ALU in subtract mode)
+  - `PC_LOAD = T3 & (JMP | (JZ & Z_flag) | (JC & C_flag))` (step 3, jump taken)
   - `LO = T3 & OUT` (step 3, only for OUT)
   - `A_OUT = LO` (same as LO — when outputting, drive A onto bus)
 
+- **Flag inputs (bottom):** `Z_flag` and `C_flag` come from the flags register in the top module. Each is ANDed with its jump instruction, then ORed with `JMP` and gated by T3 to form `PC_LOAD`.
+
 - **`L_MBR` and `RI` — hardwired to 0:** These two outputs are connected to constant `0`. The Control Unit **never** asserts them during normal execution. They are only used via the manual override pins during Programming Mode. You can see them on the left labeled `L_MBR` and `RI` with `0` constants.
 
-- **HLT mechanism:** When `T3 & HLT` is detected, the step counter's clock is inhibited (the `halted` flag freezes the counter), stopping all CPU activity until the next reset.
+- **HLT mechanism (top-right D flip-flop):** When `T3 & HLT` is detected, this flip-flop sets the `halted` flag. Its output blocks the step counter's clock, freezing the counter and stopping all CPU activity until the next reset.
 
 ---
 
@@ -1033,7 +1163,7 @@ Result: RAM[0x05] = Bank 1, Register 1
 
 - **`MAiN BUS` (top):** The 8-bit shared tri-state bus that connects all components. Every data transfer in the CPU happens through this single bus.
 
-- **`Program Counter 1` (top-left):** Outputs the current address onto the bus when `PC_OUT` is active. Increments when `PC_INC` is pulsed.
+- **`Program Counter 1` (top-left):** Outputs the current address onto the bus when `PC_OUT` is active. Increments when `PC_INC` is pulsed, and loads the jump target from the bus when `PC_LOAD` is active.
 
 - **`IR 1` — Instruction Register (upper-middle):** Captures the instruction byte from the bus. Notice the **splitter** on its `MONITOR` output:
   - Upper 4 bits `[7:4]` → `OPCODE` → fed to the Control Unit
@@ -1045,6 +1175,8 @@ Result: RAM[0x05] = Bank 1, Register 1
 
 - **`ALU 1` (center):** Connected between Register A and Register B. The Control Unit's `SUB` signal selects addition vs. subtraction (asserted during a SUB instruction's T5). Output goes through a **controlled buffer** gated by `ALU_OUT` to reach the bus.
 
+- **Flags (next to the ALU):** An 8-input NOR detects a zero result, and the ALU's carry-out provides C. Two D flip-flops (`FF_Z` and `FF_C`), clocked by `MAIN_CLK & ALU_OUT`, store them as `Z_flag` and `C_flag`, which go to the Control Unit for `JZ` and `JC`.
+
 - **`MAR` — Memory Address Register (center-right):** Captures addresses from the bus. Its `MONITOR` output connects directly to the RAM's `ADRES` input (not through the bus — this is a dedicated wire).
 
 - **`MBR` — Memory Buffer Register (upper-right):** A staging register between the bus and RAM's data input. Its `MONITOR` connects to RAM's `DATA_IN`.
@@ -1053,7 +1185,7 @@ Result: RAM[0x05] = Bank 1, Register 1
 
 - **`OUT REG` (center-right):** Captures the final output value. Connected to a **hexadecimal display** that shows the result in real-time.
 
-- **`Control Unit 1` (bottom):** Receives `OPCODE` from the IR and generates all 13 control signals. Note the **NOT gate + AND gate** at the clock input: `cu_clk = MAIN_CLK & ~PROG_MODE` — when `PROG_MODE = 1`, the CU clock is completely disabled.
+- **`Control Unit 1` (bottom):** Receives `OPCODE` from the IR and the two flags, and generates all 15 control signals. Note the **NOT gate + AND gate** at the clock input: `cu_clk = MAIN_CLK & ~PROG_MODE` — when `PROG_MODE = 1`, the CU clock is completely disabled.
 
 - **Manual override logic (bottom):** Three **OR gates** combine CU signals with manual pins:
   - `active_lm = (cu_lm & ~PROG_MODE) | MANUAL_LM`
@@ -1109,7 +1241,7 @@ task prog_write_byte(input [3:0] addr, input [7:0] data);
     // 3) MBR     -> RAM   (MANUAL_RI)
 ```
 
-After loading the program, it releases the bus, switches to Execution Mode, runs the CPU, and self-checks the result:
+After loading the program, it releases the bus, switches to Execution Mode and runs the CPU until `HLT` freezes the step counter. A fixed delay would cut looping programs short, so the testbench waits for the `halted` flag instead, giving up after 2000 cycles. Then it self-checks the result:
 
 ```verilog
 if (OUT_PORT !== 8'h14)
@@ -1119,6 +1251,23 @@ else
 ```
 
 This exercises the same Programming Mode interface you use in Logisim, so the simulation tests the real design path rather than a shortcut.
+
+**Running another example:** assemble it into `program.hex` and run the simulation again. The expected value `0x14` belongs to `program.asm`, so for other programs the line reads `FAIL` and you compare the printed `OUT_PORT` with the result given in their comments (for example `0x1E` for `subtract.asm`). Assemble `program.asm` again afterwards to restore the default.
+
+```bash
+python asm/assembler.py asm/subtract.asm asm/program.hex
+vvp cpu_prog_test
+```
+
+### Unit Tests
+
+The building blocks have their own self-checking testbenches. Each prints `ALL TESTS PASSED` on success.
+
+```bash
+iverilog -o reg_test rtl/register_unit_8b.v tb/register_unit_tb.v && vvp reg_test
+iverilog -o sram_test rtl/register_unit_8b.v rtl/sram_4byte.v tb/sram_4byte_tb.v && vvp sram_test
+iverilog -o ram_test rtl/register_unit_8b.v rtl/sram_4byte.v rtl/ram_16byte.v tb/ram_16byte_tb.v && vvp ram_test
+```
 
 ---
 
@@ -1158,7 +1307,7 @@ interface, then the CPU executes it.
 |:---:|---|---|
 | ✅ | **SUB instruction** | Opcode `0011`; reuses the ADD datapath with the ALU in subtract mode |
 | ✅ | **JMP instruction** | Opcode `0100`; multiplexer in the Program Counter loads the target from the bus |
-| ⬜ | **Conditional branching** (JZ, JC) | Requires adding a Flags Register (Zero, Carry, Overflow) |
+| ✅ | **Conditional branching** (JZ, JC) | Z and C flags captured from the ALU; `PC_LOAD` gated by the flag |
 | ⬜ | **STA instruction** | Store accumulator value to a RAM address |
 | ⬜ | **Expanded address space** | Use full 8-bit address for 256 bytes of RAM |
 | ⬜ | **FPGA synthesis** | Port the design to an FPGA board for real hardware execution |

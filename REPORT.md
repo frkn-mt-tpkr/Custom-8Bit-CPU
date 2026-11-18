@@ -9,7 +9,7 @@
 
 ## 1. Project Overview
 
-This report documents the specifications, design constraints, resource utilization, and performance characteristics of a custom 8-bit processor based on the SAP-1 (Simple As Possible) architecture. The entire CPU was designed from the ground up using only primitive logic gates, D flip-flops, and structural wiring — no pre-built components, no behavioral memory arrays, and no library modules were used.
+This report documents the specifications, design constraints, resource utilization, and performance characteristics of a custom 8-bit processor based on the SAP-1 (Simple As Possible) architecture. The entire CPU was designed from the ground up using only primitive logic gates, flip-flops, and structural wiring — no pre-built components, no behavioral memory arrays, and no library modules were used.
 
 | Item | Detail |
 |---|---|
@@ -74,6 +74,8 @@ This report documents the specifications, design constraints, resource utilizati
 | `0x2_` | `0010` | **LDA** | `A ← RAM[addr]` | 5 |
 | `0x3_` | `0011` | **SUB** | `A ← A − RAM[addr]` | 6 |
 | `0x4_` | `0100` | **JMP** | `PC ← addr` | 4 |
+| `0x5_` | `0101` | **JZ** | `PC ← addr` if Z = 1 | 4 |
+| `0x6_` | `0110` | **JC** | `PC ← addr` if C = 1 | 4 |
 | `0xE_` | `1110` | **OUT** | `OUT_PORT ← A` | 4 |
 | `0xF_` | `1111` | **HLT** | Halt (freeze step counter) | 4 |
 
@@ -82,7 +84,7 @@ This report documents the specifications, design constraints, resource utilizati
 | Instruction encoding | Fixed-length, 8-bit |
 | Addressing modes | Direct only (4-bit absolute address) |
 | Max instructions in memory | 16 (limited by 4-bit address space) |
-| Branch/Jump support | Unconditional JMP (direct PC load); no conditional branches |
+| Branch/Jump support | JMP (unconditional), JZ and JC (on the Z and C flags) |
 | Interrupt support | None |
 
 ---
@@ -96,7 +98,7 @@ This report documents the specifications, design constraints, resource utilizati
 | 4-bit address space | Only 16 memory locations available | Programs limited to 16 bytes (instructions + data combined) |
 | No pipeline | Single instruction processed at a time | CPI ranges from 4–6 depending on instruction |
 | Shared bus | All data transfers via single 8-bit tri-state bus | Only one bus driver active per clock cycle |
-| No flags register | ALU carry/overflow/zero flags not captured | Conditional branching impossible without hardware modification |
+| Two flags only | Z and C are captured; there is no signed-overflow or negative flag | Signed comparisons need extra code |
 | No stack or link register | PC can increment or be loaded by `JMP`, but return addresses are not saved | Loops are possible; subroutines (CALL/RET) are not |
 | Fixed control sequence | 8-step counter (T0–T7), wraps every 8 cycles | T6–T7 are no-ops (wasted cycles for 6-step instructions) |
 
@@ -130,22 +132,23 @@ This report documents the specifications, design constraints, resource utilizati
 | Component | Module Name | Instances | Sub-components per Instance | Total Primitives |
 |---|---|:---:|---|:---:|
 | 1-Bit Full Adder | `full_adder_1b` | 16 | 2 XOR + 2 AND + 1 OR | 80 gates |
-| 8-Bit Register | `register_unit_8b` | 24 | 8 D-FF + 8 Tri-state buffers | 192 FF + 192 buffers |
+| 8-Bit Register | `register_unit_8b` | 23 | 8 D-FF + 8 Tri-state buffers | 184 FF + 184 buffers |
 | 8-Bit ALU | `alu_8b_add_sub` | 2 | 8 FA + 8 XOR | 2 × (80 + 8) = 176 gates |
 | 4-Byte SRAM Bank | `sram_4byte` | 4 | 4 registers + 1 decoder + 4 AND | 4 × (32 FF + ...) |
 | 16-Byte RAM | `ram_16byte` | 1 | 4 banks + 1 decoder + 8 AND | see sub-components |
 | Control Unit | `control_unit_sap1_custom` | 1 | 3 JK-FF + decoders + logic | ~40 gates |
-| Program Counter | `program_counter` | 1 | 1 register + 1 ALU + 1 AND | see sub-components |
+| Program Counter | `program_counter` | 1 | 1 register + 1 ALU + 8-bit mux + AND/OR | see sub-components |
+| Flags register | (in `cpu_top_sap1`) | 1 | 2 D-FF + 8-input NOR + 1 AND | 2 FF |
 
 ### 4.2 Summary Totals
 
 | Resource | Count |
 |---|---|
-| **D Flip-Flops** | 192 (24 registers × 8 bits) + 3 (step counter) + 1 (halted flag) = **196** |
+| **Flip-Flops** | 184 (23 registers × 8 bits) + 3 JK (step counter) + 1 (halted flag) + 2 (Z, C flags) = **190** |
 | **Logic Gates (approx.)** | ~300 (ALU, decoders, control logic, address decoding) |
-| **Tri-State Buffers** | 192 (register outputs) + 6 (bus drivers) = **~198** |
+| **Tri-State Buffers** | 184 (register outputs) + 6 (bus drivers) = **~190** |
 | **Total Verilog Modules** | 8 unique modules |
-| **Total Verilog Source Lines** | 518 lines (RTL only, excluding testbench) |
+| **Total Verilog Source Lines** | 568 lines (RTL only, excluding testbench) |
 
 ### 4.3 Source Code Metrics
 
@@ -174,6 +177,7 @@ This report documents the specifications, design constraints, resource utilizati
 | **ADD** | 3 | 3 (T3, T4, T5) | **6** | Load from RAM into B, compute A+B, store to A |
 | **SUB** | 3 | 3 (T3, T4, T5) | **6** | Load from RAM into B, compute A−B, store to A |
 | **JMP** | 3 | 1 (T3) | **4** | Load the target address into the PC |
+| **JZ / JC** | 3 | 1 (T3) | **4** | Load the target into the PC only if the flag is set |
 | **OUT** | 3 | 1 (T3) | **4** | Copy accumulator to output register |
 | **HLT** | 3 | 1 (T3) | **4** | Set halted flag, freeze counter |
 
@@ -289,18 +293,20 @@ The ALU uses a **ripple-carry** architecture where the carry must propagate thro
 | # | Limitation | Severity | Workaround / Future Fix |
 |:---:|---|:---:|---|
 | 1 | Only 16 bytes of RAM | Medium | Expand to 8-bit address (256 bytes) |
-| 2 | No conditional branches (JZ, JC) | High | Requires a flags register; JMP is implemented |
-| 3 | No flags register | High | Add Zero, Carry, Overflow flags from ALU output |
+| 2 | No STA (store) instruction | High | Add write-back path from A to RAM; loops cannot keep variables in RAM yet |
+| 3 | No signed-overflow or negative flag | Low | Only Z and C are captured |
 | 4 | T6–T7 wasted cycles | Low | Optimize to variable-length micro-steps |
 | 5 | No gate delay modeling | Low | Add `#delay` annotations for timing-accurate simulation |
-| 6 | No STA (store) instruction | Medium | Add write-back path from A to RAM |
-| 7 | JMP also latches MAR | None | Accepted by design; see 7.1 |
+| 6 | No stack (CALL/RET) | Medium | Add a stack pointer and return-address save |
+| 7 | Jumps also latch MAR | None | Accepted by design; see 7.1 |
 
 ### 7.1 JMP Side Effect on MAR
 
 `LM` is derived as `T0 | EI` rather than from its own instruction decode. Because
-`EI` now includes JMP, a JMP's T3 latches the jump target into MAR as well as
-into the PC.
+`EI` includes JMP, JZ and JC, the T3 of every jump latches the target into MAR.
+For JMP, and for a taken JZ/JC, the target also goes into the PC; for a JZ/JC
+that is not taken, `EI` still drives the target onto the bus but `PC_LOAD` stays
+low, so only MAR receives it.
 
 This is harmless. MAR is only read when the RAM is accessed (`RO` or `RI`), and
 the next instruction's T0 overwrites MAR with the new PC before any such access
@@ -334,7 +340,7 @@ observable behaviour is identical and the gate count is lower.
 
 | FPGA Resource | Estimated Usage | Typical Budget (Artix-7 XC7A35T) | Utilization |
 |---|:---:|:---:|:---:|
-| Flip-Flops (FF) | ~196 | 41,600 | < 0.5% |
+| Flip-Flops (FF) | ~190 | 41,600 | < 0.5% |
 | LUTs (Look-Up Tables) | ~300 | 20,800 | ~1.4% |
 | I/O Pins | ~25 | 210 | ~12% |
 | Block RAM | 0 (register-based) | 50 × 36Kb | 0% |
@@ -351,12 +357,12 @@ This project successfully demonstrates a fully functional 8-bit processor built 
 | Achievement | Detail |
 |---|---|
 | ✅ Gate-level design | Every component built from AND, OR, XOR, NOT gates |
-| ✅ Structural RAM | 16 bytes from 192 D flip-flops, no behavioral arrays |
+| ✅ Structural RAM | 16 bytes from 128 D flip-flops, no behavioral arrays |
 | ✅ Dual-mode operation | Programming Mode + Execution Mode |
 | ✅ Correct computation | 13 + 7 = 20 verified in simulation |
 | ✅ Logisim → Verilog | 1:1 faithful translation, both environments produce identical results |
 | ⬜ FPGA synthesis | Planned for future work |
-| ⬜ Extended ISA | SUB, JMP, JZ, STA instructions planned |
+| ✅ Extended ISA | SUB, JMP, JZ and JC implemented with Z/C flags; STA planned |
 
 ---
 

@@ -4,6 +4,8 @@ module control_unit_sap1_custom (
     input  wire       CLK,
     input  wire       RESET,
     input  wire [3:0] OPCODE,
+    input  wire       Z_FLAG,
+    input  wire       C_FLAG,
 
     output wire PC_OUT,
     output wire PC_INC,
@@ -49,11 +51,16 @@ module control_unit_sap1_custom (
     wire SUB_ins = (OPCODE == 4'b0011);
     wire LDA_ins = (OPCODE == 4'b0010);
     wire JMP_ins = (OPCODE == 4'b0100);
+    wire JZ_ins  = (OPCODE == 4'b0101);
+    wire JC_ins  = (OPCODE == 4'b0110);
     wire OUT_ins = (OPCODE == 4'b1110);
     wire HLT_ins = (OPCODE == 4'b1111);
 
     // ADD and SUB share the same datapath; only the ALU mode differs
     wire ADD_SUB_ins = ADD_ins | SUB_ins;
+
+    // All jumps put their target on the bus; only the load is conditional
+    wire JUMP_ins = JMP_ins | JZ_ins | JC_ins;
 
     // Control Logic
 
@@ -61,7 +68,7 @@ module control_unit_sap1_custom (
     assign PC_INC  = T1;
     assign LI      = T2;
 
-    assign EI      = T3 & (ADD_SUB_ins | LDA_ins | JMP_ins);
+    assign EI      = T3 & (ADD_SUB_ins | LDA_ins | JUMP_ins);
 
     // L_MBR and RI are only needed during programming mode (MANUAL signals).
     // The control unit should NEVER assert them during normal execution.
@@ -90,7 +97,8 @@ module control_unit_sap1_custom (
     // Put the ALU in subtract mode only during T5 of SUB
     assign SUB     = T5 & SUB_ins;
 
-    // Load the PC from the bus during T3 of JMP
-    assign PC_LOAD = T3 & JMP_ins;
+    // Load the PC at T3: always for JMP, for JZ/JC only when the flag is set.
+    // A jump not taken leaves the PC at the value incremented in T1.
+    assign PC_LOAD = T3 & (JMP_ins | (JZ_ins & Z_FLAG) | (JC_ins & C_FLAG));
 
 endmodule
